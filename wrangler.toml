@@ -1,0 +1,11 @@
+name = "feedback-analyzer-divya"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+[ai]
+binding = "AI"
+
+[[d1_databases]] 
+binding = "DB" 
+database_name = "feedback_db" 
+database_id = "bf4374cb-7973-4468-b770-bc7de140505c"
