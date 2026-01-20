@@ -1,16 +1,12 @@
-
-
 export default {
   async fetch(request: Request, env: any): Promise<Response> {
     const url = new URL(request.url);
 
     if (request.method === "POST" && url.pathname === "/ingest") {
       const { text } = await request.json();
-
       await env.DB.prepare(
         "INSERT INTO feedback (text) VALUES (?)"
       ).bind(text).run();
-
       return Response.json({ status: "ok" });
     }
 
@@ -33,29 +29,103 @@ export default {
       const feedback = body.feedback;
 
       const prompt = `
-You are a product manager analyzing customer feedback.
+      You are a product manager analyzing customer feedback.
 
-Feedback:
-"""
-${feedback}
-"""
+      Feedback:
+      "${feedback}"
 
-Return a JSON object with:
-- summary (1–2 sentences)
-- sentiment (Positive, Neutral, or Negative)
-- urgency (Low, Medium, or High)
-`;
+      Return ONLY valid JSON with this structure:
+      {
+        "summary": "string",
+        "sentiment": "Positive | Neutral | Negative",
+        "urgency": "Low | Medium | High"
+      }
 
-      const aiResponse = await env.AI.run(
-        "@cf/meta/llama-3-8b-instruct",
-        {
-          messages: [
-            { role: "user", content: prompt }
-          ]
-        }
-      );
+      Do not include explanations, markdown, or extra text.
+      Return ONLY JSON.
+      `;
 
-      return Response.json(aiResponse);
+      const aiResponse = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
+        prompt
+      });
+
+      let summary, sentiment, urgency;
+      try { 
+        const parsed = JSON.parse(aiResponse.response); 
+        summary = parsed.summary; 
+        sentiment = parsed.sentiment; urgency = parsed.urgency; 
+      } catch (err) { 
+        return Response.json({ 
+          error: "AI returned invalid JSON", 
+          raw: aiResponse.response 
+        }, { status: 500 }); 
+      }
+
+      await env.DB.prepare(
+        `INSERT INTO feedback (text, summary, sentiment, urgency, created_at)
+         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`
+      ).bind(feedback, summary, sentiment, urgency).run();
+
+      return Response.json({ summary, sentiment, urgency });
+    }
+
+    
+    if (request.method === "GET" && url.pathname === "/list") {
+      const rows = await env.DB.prepare(
+        "SELECT * FROM feedback ORDER BY created_at DESC"
+      ).all();
+
+      return Response.json(rows.results);
+    }
+
+    if (request.method === "GET" && url.pathname === "/dashboard") {
+      return new Response(`
+        <html>
+          <head>
+            <title>Feedback Dashboard</title>
+            <style>
+              body { font-family: sans-serif; padding: 20px; }
+              table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+              th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+              th { background: #f4f4f4; }
+            </style>
+          </head>
+          <body>
+            <h1>Feedback Dashboard</h1>
+            <table>
+              <thead>
+                <tr>
+                  <th>Feedback</th>
+                  <th>Summary</th>
+                  <th>Sentiment</th>
+                  <th>Urgency</th>
+                  <th>Created At</th>
+                </tr>
+              </thead>
+              <tbody id="rows"></tbody>
+            </table>
+
+            <script>
+              fetch('/list')
+                .then(res => res.json())
+                .then(data => {
+                  const tbody = document.getElementById('rows');
+                  data.forEach(row => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = \`
+                      <td>\${row.text}</td>
+                      <td>\${row.summary}</td>
+                      <td>\${row.sentiment}</td>
+                      <td>\${row.urgency}</td>
+                      <td>\${row.created_at}</td>
+                    \`;
+                    tbody.appendChild(tr);
+                  });
+                });
+            </script>
+          </body>
+        </html>
+      `, { headers: { "Content-Type": "text/html" }});
     }
 
     const html = `
