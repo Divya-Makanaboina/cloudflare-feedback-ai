@@ -165,3 +165,8 @@ dist
 .env*
 !.env.example
 .wrangler/
+
+node_modules/
+.wrangler/
+dist/
+
